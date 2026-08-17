@@ -195,21 +195,133 @@ let
     end
 
     # 3. Vertically stacked Figure (3 rows, 1 column + shared right legend)
-    fig_stab = Figure(size = (750, 1100))
+    fig_stab = Figure(size = (650, 1000))
     
-    ax_cov  = Axis(fig_stab[1, 1], xlabel="Frequency [Hz]", ylabel="Model Order", title="SSI-COV Stabilization Diagram")
-    ax_pc   = Axis(fig_stab[2, 1], xlabel="Frequency [Hz]", ylabel="Model Order", title="PC-SSI Stabilization Diagram")
-    ax_data = Axis(fig_stab[3, 1], xlabel="Frequency [Hz]", ylabel="Model Order", title="SSI-DATA Stabilization Diagram")
+    ax_cov  = Axis(fig_stab[1, 1:3], xlabel="Frequency [Hz]", ylabel="Model Order", title="SSI-COV Stabilization Diagram")
+    ax_pc   = Axis(fig_stab[2, 1:3], xlabel="Frequency [Hz]", ylabel="Model Order", title="PC-SSI Stabilization Diagram")
+    ax_data = Axis(fig_stab[3, 1:3], xlabel="Frequency [Hz]", ylabel="Model Order", title="SSI-DATA Stabilization Diagram")
     
     plot_multi_status_diagram!(ax_cov, pts_cov, f_true)
     plot_multi_status_diagram!(ax_pc, pts_pc, f_true)
     plot_multi_status_diagram!(ax_data, pts_data, f_true)
     
     # Shared legend spanning all 3 vertical subplots
-    Legend(fig_stab[1:3, 2], ax_cov, "Pole Status", framevisible=true)
+    Legend(fig_stab[4, 3], ax_cov, "Pole Status", framevisible=true)
     
     fig_stab
 end
+
+# ╔═╡ 54059826-bb2f-43ab-b3ca-1bda8652e26d
+fighc=let
+
+# Apply custom dark theme for high contrast
+set_theme!(
+    theme_dark(),
+    backgroundcolor = :black,
+    font = "Helvetica"
+)
+
+# -------------------------------------------------------------------
+# 1. Compute Data & Reconstructions
+# -------------------------------------------------------------------
+test_orders = 2:1:20
+
+pts_cov, _, _ = EigenDataAnalysis.compute_stabilization_diagram(
+    SSICOV, X_noisy, dt; orders=test_orders, max_lag=50,
+    tol_f=0.01, tol_zeta=0.05, tol_mac=0.95
+)
+
+# Fit a primary model to extract time-domain reconstruction
+model_cov = fit(SSICOV, X_noisy, dt; max_lag=50, r=12, unstable_filt=true)
+X_rec, t_idx = reconstruct(model_cov)
+time_vec = t_idx .* dt
+rec_err = reconstruction_error(model_cov, X_noisy) * 100
+
+# -------------------------------------------------------------------
+# 2. Multi-Marker Plotting Helper
+# -------------------------------------------------------------------
+function plot_multi_status_diagram!(ax, points, true_freqs)
+    # High-contrast neon color palette
+    status_specs = [
+        (:fully_stable, "Fully Stable (f, ζ, MAC)", :circle,   "#00E676", 9),  # Neon Green
+        (:freq_damp,    "Stable (f, ζ)",            :utriangle, "#00E5FF", 8),  # Cyan
+        (:freq_mac,     "Stable (f, MAC)",          :rect,      "#FF007F", 8),  # Magenta
+        (:freq,         "Stable (f only)",          :cross,     "#FFD700", 7),  # Gold
+        (:unstable,     "Unstable / Drift",         :xcross,    (:gray60, 0.35), 5), # Muted Gray
+        (:new,          "New Pole",                 :star4,     "#D500F9", 9)   # Neon Purple
+    ]
+
+    # Ground truth frequency reference lines
+    vlines!(ax, true_freqs, color=("#FF3366", 0.7), linestyle=:dash, linewidth=1.5)
+
+    # Plot markers by classification
+    for (status_code, label_str, marker_style, color_val, msize) in status_specs
+        matching_pts = filter(p -> p.status == status_code, points)
+        if !isempty(matching_pts)
+            f_vals = [p.freq_hz for p in matching_pts]
+            o_vals = [p.order for p in matching_pts]
+            scatter!(ax, f_vals, o_vals,
+                marker=marker_style, color=color_val, markersize=msize, label=label_str)
+        end
+    end
+end
+
+# -------------------------------------------------------------------
+# 3. High-Contrast Composite Figure Construction (1200 × 800)
+# -------------------------------------------------------------------
+fig = Figure(size = (1200, 800), backgroundcolor = "#0D1117")
+
+# --- TOP PANEL: Time-Domain Reconstruction ---
+ax_rec = Axis(
+    fig[1, 1:2],
+    xlabel = "Time [s]",
+    ylabel = "Amplitude",
+    title = "Output Signal Reconstruction (Channel 1) — Relative Error: $(round(rec_err, digits=1))%",
+    titlealign = :left,
+    titlesize = 14,
+    xgridcolor = (:white, 0.08),
+    ygridcolor = (:white, 0.08)
+)
+
+lines!(ax_rec, time_vec, X_noisy[1, t_idx], color = (:skyblue, 0.45), linewidth = 1.2, label = "Measured Response (Noisy)")
+lines!(ax_rec, time_vec, X_rec[1, :], color = "#00FF66", linewidth = 1.8, label = "SSI-COV Reconstruction")
+axislegend(ax_rec, position = :rt, framecolor = :transparent, backgroundcolor = (:black, 0.6))
+
+# --- BOTTOM PANEL: SSI-COV Stabilization Diagram ---
+ax_cov = Axis(
+    fig[2, 1],
+    xlabel = "Frequency [Hz]",
+    ylabel = "Model Order (r)",
+    title = "SSI-COV Pole Stabilization Diagram",
+    titlealign = :left,
+    titlesize = 14,
+    xgridcolor = (:white, 0.08),
+    ygridcolor = (:white, 0.08)
+)
+
+plot_multi_status_diagram!(ax_cov, pts_cov, f_true)
+
+# --- RIGHT PANEL: Shared Legend & Summary Specs ---
+Legend(
+    fig[2, 2],
+    ax_cov,
+    "Pole Status",
+    framecolor = (:white, 0.15),
+    backgroundcolor = "#161B22",
+    labelsize = 12,
+    titlesize = 13
+)
+
+# Optimize Row Ratios (Top Plot is slimmer, Bottom Stabilization Plot is dominant)
+rowsize!(fig.layout, 1, Relative(0.35))
+rowsize!(fig.layout, 2, Relative(0.65))
+
+#save("EigenDataAnalysis_HighContrast_Banner.png", fig, px_per_unit = 2)
+fig
+end
+
+# ╔═╡ 03c7641c-08e4-44e5-b062-8223f04ba58b
+save("EigenDataAnalysis_HighContrast_Banner.png", fighc, px_per_unit = 2)
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1976,5 +2088,7 @@ version = "4.1.0+0"
 # ╠═1fdedf5b-971d-4eae-ba58-beb1d5219c25
 # ╠═f565c5f0-ef30-47f2-848e-40d4369e5a9f
 # ╠═d81ec0c0-ff1e-4c2c-b027-d00029ff364a
+# ╠═54059826-bb2f-43ab-b3ca-1bda8652e26d
+# ╠═03c7641c-08e4-44e5-b062-8223f04ba58b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
