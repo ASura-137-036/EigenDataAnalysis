@@ -113,6 +113,7 @@ EigenDataAnalysis/
 ├── notebooks/
 │   └── ssi_testing.jl
 ├── README.md
+├── LICENSE
 └── .gitattributes
 
 ```
